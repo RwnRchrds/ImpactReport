@@ -97,7 +97,7 @@ Options
 
   `-h, --help`             Show this help and exit
 
-EXAMPLES
+Examples
 --------
 
 Analyse a specific method:
