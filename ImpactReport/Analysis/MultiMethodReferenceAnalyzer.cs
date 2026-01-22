@@ -22,16 +22,21 @@ public static class MultiMethodReferenceAnalyzer
         foreach (IMethodSymbol method in methods.Distinct(SymbolEqualityComparer.Default))
         {
             // FindReferencesAsync returns IEnumerable<ReferencedSymbol>
-            var referencedSymbols = await SymbolFinder.FindReferencesAsync(method, solution).ConfigureAwait(false);
+            var refs = await SymbolFinder.FindReferencesAsync(method, solution).ConfigureAwait(false);
 
-            // Flatten all reference locations (these are ReferenceLocation)
-            var allLocations = referencedSymbols
-                .SelectMany(rs => rs.Locations)   // rs.Locations : IEnumerable<ReferenceLocation>
-                .ToList();
+            var methodDef = method.OriginalDefinition;
 
-            var totalRefs = allLocations.Count;
+            var exactLocations =
+                refs.SelectMany(r =>
+                        r.Definition is IMethodSymbol def &&
+                        SymbolEqualityComparer.Default.Equals(def.OriginalDefinition, methodDef)
+                            ? r.Locations
+                            : Enumerable.Empty<ReferenceLocation>())
+                    .ToList();
 
-            var projectsImpacted = allLocations
+            var totalRefs = exactLocations.Count;
+
+            var projectsImpacted = exactLocations
                 .Select(l => l.Document?.Project?.Id)
                 .Where(pid => pid is not null)
                 .Distinct()
@@ -72,7 +77,7 @@ public static class MultiMethodReferenceAnalyzer
             q = q.Where(x => x.ProjectsImpacted >= options.MinProjects);
 
         q = q.OrderByDescending(x => x.RiskScore)
-             .ThenByDescending(x => x.TotalReferences);
+            .ThenByDescending(x => x.TotalReferences);
 
         if (options is { All: false, Top: { } top })
             q = q.Take(top);

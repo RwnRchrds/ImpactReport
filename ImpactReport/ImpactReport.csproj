@@ -11,7 +11,7 @@
 
 		<!-- NuGet metadata -->
 		<PackageId>ImpactReport</PackageId>
-		<Version>0.1.2</Version>
+		<Version>0.1.3</Version>
 		<Authors>Rowan</Authors>
 		<Description>Roslyn-based impact analysis tool for .NET solutions</Description>
 	</PropertyGroup>
