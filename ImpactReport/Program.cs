@@ -1,5 +1,6 @@
 ﻿using ImpactReport.Analysis;
 using ImpactReport.Cli;
+using ImpactReport.Git;
 using ImpactReport.Reporting;
 using ImpactReport.Utils;
 using ImpactReport.Workspace;
@@ -17,30 +18,60 @@ internal static class Program
             MsBuildBootstrapper.Register();
 
             using var workspace = await SolutionLoader.OpenAsync(options.SolutionPath);
+            var solution = workspace.CurrentSolution;
 
-            var method = await SymbolResolver.FindMethodAsync(
-                workspace.CurrentSolution,
-                options.TypeName,
-                options.MethodName);
+            if (!options.ChangedMode)
+            {
+                var method = await SymbolResolver.FindMethodAsync(
+                    solution,
+                    options.TypeName!,
+                    options.MethodName!);
 
-            var result = await ReferenceAnalyzer.AnalyzeAsync(
-                workspace.CurrentSolution,
-                method,
+                var result = await ReferenceAnalyzer.AnalyzeAsync(
+                    solution,
+                    method,
+                    options.AreaMap,
+                    options.MaxCallSitesPerProject);
+
+                MarkdownReportWriter.WriteToFile(result, options.OutputPath);
+                Console.WriteLine($"Wrote: {options.OutputPath}");
+                return 0;
+            }
+
+            // Changed mode
+            var repoRoot = GitRunner.GetRepoRoot();
+            var changedFiles = ChangedFilesProvider.GetChangedCsFiles(options.BaseRef, repoRoot);
+
+            Console.WriteLine($"Changed .cs files: {changedFiles.Count}");
+
+            var changedMethods = await ChangedMethodDetector.FindChangedMethodsAsync(
+                solution,
+                changedFiles,
+                repoRoot,
+                options.IncludeTests);
+
+            Console.WriteLine($"Changed methods detected: {changedMethods.Count}");
+
+            var ranked = await MultiMethodReferenceAnalyzer.PreAnalyzeManyAsync(solution, changedMethods);
+
+            var filtered = MultiMethodReferenceAnalyzer.ApplyFiltersAndTakeTop(ranked, options);
+
+            Console.WriteLine($"Changed methods included in report: {filtered.Count}");
+
+            var multi = await MultiMethodReferenceAnalyzer.AnalyzeManyAsync(
+                solution,
+                filtered.Select(x => x.Method),
                 options.AreaMap,
-                options.MaxCallSitesPerProject);
+                options.MaxCallSitesPerProject,
+                options);
 
-            MarkdownReportWriter.WriteToFile(result, options.OutputPath);
-
+            MarkdownReportWriter.WriteToFile(multi, options.OutputPath);
             Console.WriteLine($"Wrote: {options.OutputPath}");
-            Console.WriteLine($"Projects impacted: {result.Projects.Count}");
-            foreach (var p in result.Projects.OrderBy(p => p.ProjectName))
-                Console.WriteLine($"- {p.ProjectName}: {p.TotalReferences} reference(s)");
-
             return 0;
         }
         catch (Exception ex)
         {
-            await Console.Error.WriteLineAsync(ex.Message);
+            Console.Error.WriteLine(ex.Message);
             Console.Error.WriteLine(ex);
             return 1;
         }

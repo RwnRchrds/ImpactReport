@@ -1,0 +1,8 @@
+{
+  "profiles": {
+    "ImpactReport": {
+      "commandName": "Project",
+      "commandLineArgs": "--sln \"C:\\Users\\Rowan\\Source\\Repos\\MyPortal\\MyPortal.sln\" --type MyPortal.Services.System.UserService --method GetDetailsByIdAsync --out impact-report.md --areas areas.json\r\n"
+    }
+  }
+}

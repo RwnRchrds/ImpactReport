@@ -27,4 +27,9 @@ public static class ArgParser
         var raw = GetOptional(args, name);
         return int.TryParse(raw, out var v) ? v : defaultValue;
     }
+
+    public static bool HasFlag(string[] args, params string[] names)
+    {
+        return args.Any(a => names.Any(n => a.Equals(n, StringComparison.OrdinalIgnoreCase)));
+    }
 }
