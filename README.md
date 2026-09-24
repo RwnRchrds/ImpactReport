@@ -83,6 +83,21 @@ Single method analysis:
 impactreport --sln MySolution.sln --type MyApp.Services.OrderService --method GetById
 ```
 
+### Committed vs uncommitted changes
+
+By default changed mode diffs `<base>...HEAD`, so it sees **committed** work only.
+An edit you have saved but not committed produces an empty report, which looks
+like "no impact" rather than "nothing to compare".
+
+`--uncommitted` diffs the merge base against your working tree instead, so you can
+edit, save and re-run without committing:
+
+```bash
+impactreport --sln MySolution.sln --changed --base origin/main --uncommitted
+```
+
+This is the flag you want when iterating on a change, or demonstrating the tool.
+
 ---
 
 ## Impact areas
@@ -194,6 +209,17 @@ catches HTTP-triggered functions the frontend calls directly. Endpoints with no
 frontend caller are listed at the end of the section rather than hidden, so you
 can see what the convention missed.
 
+The two halves have different requirements. Naming the changed frontend files
+needs a diff, so it only applies to `--changed`. Naming the screens needs no git
+at all, so it works in single-method mode too:
+
+```bash
+impactreport --sln MySolution.sln --type MyApp.Services.OrderService --method List --frontend --frontend-root src/WebClient
+```
+
+That answers "which screens would this method's change reach?" without editing
+anything.
+
 This is deliberately **not** a TypeScript call graph. There is no analysis
 *within* the frontend: a changed component that another component imports will
 not pull that second component into the report.
@@ -225,6 +251,7 @@ Reference counts are transitive, so a method reached at hop 3 still counts. The
 | `--sln <path>` | Path to the `.sln`/`.slnx` file (required) |
 | `--changed` | Analyse methods changed compared to a git base ref |
 | `--base <ref>` | Git base ref to diff against (default: `origin/main`) |
+| `--uncommitted` | Include working-tree edits, not just committed ones (changed mode only) |
 | `--type <type>` | Fully qualified type name (single-method mode) |
 | `--method <name>` | Method name to analyse (single-method mode) |
 | `--areas <file>` | JSON file naming the impact areas of your codebase |
@@ -259,8 +286,7 @@ impactreport --sln MySolution.sln --changed --areas areas.json
 impactreport --sln MySolution.sln --changed --base origin/develop --depth 4
 
 # One method, including test call sites
-impactreport --sln MySolution.sln \
-  --type MyApp.Services.OrderService --method GetById --include-tests
+impactreport --sln MySolution.sln --type MyApp.Services.OrderService --method GetById --include-tests
 ```
 
 ---
@@ -272,9 +298,14 @@ impactreport --sln MySolution.sln \
   search, so treat the report as a strong hint rather than proof.
 - Changed mode detects changed **methods, constructors and accessors**. A changed
   field initialiser or type declaration is not itself a seed.
-- A method reached through an interface counts against every implementation that
-  could satisfy the call, which can overstate impact in codebases with many
-  implementations of one interface.
+- A call through a **non-generic** interface counts against every implementation of
+  it, because any of them could be the one registered at runtime. In a codebase
+  with many implementations of one interface this overstates impact. Calls through
+  a **generic** interface are narrowed by the type argument, so
+  `ISettings<UserSettings>` does not pull in `ISettings<BillingSettings>`.
+- Accuracy depends on the solution loading cleanly. Projects that fail to load are
+  reported on stderr with a `WARNING`, and their call sites are missing from the
+  report — restore packages before trusting a result.
 - Analysis runs against the working tree, not the base commit, so a method that was
   deleted on your branch has nothing left to analyse.
 - "Entry point" means nothing in *this solution* calls it. A public API consumed by
