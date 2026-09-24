@@ -1,4 +1,4 @@
-﻿namespace ImpactReport.Analysis.Models;
+namespace ImpactReport.Analysis.Models;
 
 public sealed record ReferenceHit(
     string ProjectName,
@@ -6,4 +6,7 @@ public sealed record ReferenceHit(
     int LineNumber,
     string LineText,
     string? ContainingNamespace,
-    string? ImpactArea);
+    string? ContainingType,
+    string? ContainingMember,
+    int Depth,
+    IReadOnlyList<string> Areas);

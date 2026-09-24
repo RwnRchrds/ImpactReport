@@ -1,4 +1,4 @@
-﻿namespace ImpactReport.Analysis.Models;
+namespace ImpactReport.Analysis.Models;
 
 public sealed record ProjectImpact(
     string ProjectName,

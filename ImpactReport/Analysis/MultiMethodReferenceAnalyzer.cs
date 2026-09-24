@@ -1,110 +1,132 @@
-﻿using ImpactReport.Analysis.Models;
+using ImpactReport.Analysis.Models;
+using ImpactReport.Areas;
+using ImpactReport.Cli;
 using Microsoft.CodeAnalysis;
-using Microsoft.CodeAnalysis.FindSymbols;
 
 namespace ImpactReport.Analysis;
 
 public sealed record MethodImpact(string MethodDisplay, ImpactResult Result);
 
-public sealed record MultiImpactResult(IReadOnlyList<MethodImpact> Methods);
+public sealed record MultiImpactResult(
+    IReadOnlyList<MethodImpact> Methods,
+    IReadOnlyList<AreaImpact> Areas,
+    IReadOnlyList<AffectedProject> Projects,
+    IReadOnlyList<AffectedMember> Members,
+    int MethodsDetected,
+    bool Truncated)
+{
+    public IReadOnlyList<AffectedMember> EntryPoints =>
+        Members.Where(m => m.IsEntryPoint).ToList();
+}
 
 public static class MultiMethodReferenceAnalyzer
 {
-    // ---------------------------
-    // Pass A: Cheap pre-analysis
-    // ---------------------------
     public static async Task<IReadOnlyList<MethodPreImpact>> PreAnalyzeManyAsync(
-        Solution solution,
-        IEnumerable<IMethodSymbol> methods)
+        IEnumerable<IMethodSymbol> methods,
+        ReferenceFinder finder,
+        bool includeTests,
+        CancellationToken cancellationToken = default)
     {
         var list = new List<MethodPreImpact>();
 
-        foreach (IMethodSymbol method in methods.Distinct(SymbolEqualityComparer.Default))
+        foreach (var method in Distinct(methods))
         {
-            // FindReferencesAsync returns IEnumerable<ReferencedSymbol>
-            var refs = await SymbolFinder.FindReferencesAsync(method, solution).ConfigureAwait(false);
+            var locations = await finder.FindAsync(method, cancellationToken).ConfigureAwait(false);
 
-            var methodDef = method.OriginalDefinition;
-
-            var exactLocations =
-                refs.SelectMany(r =>
-                        r.Definition is IMethodSymbol def &&
-                        SymbolEqualityComparer.Default.Equals(def.OriginalDefinition, methodDef)
-                            ? r.Locations
-                            : Enumerable.Empty<ReferenceLocation>())
-                    .ToList();
-
-            var totalRefs = exactLocations.Count;
-
-            var projectsImpacted = exactLocations
-                .Select(l => l.Document?.Project?.Id)
-                .Where(pid => pid is not null)
-                .Distinct()
-                .Count();
-
-            var display = $"{method.ContainingType.ToDisplayString()}.{method.Name}(...)";
+            var relevant = includeTests
+                ? locations
+                : locations.Where(l => !CallGraphWalker.IsTestProject(l.Document.Project)).ToList();
 
             list.Add(new MethodPreImpact(
                 Method: method,
-                MethodDisplay: display,
-                TotalReferences: totalRefs,
-                ProjectsImpacted: projectsImpacted));
+                MethodDisplay: ReferenceAnalyzer.Display(method),
+                TotalReferences: relevant.Count,
+                ProjectsImpacted: relevant.Select(l => l.Document.Project.Id).Distinct().Count()));
         }
 
-        return list
-            .OrderByDescending(x => x.RiskScore)
-            .ThenByDescending(x => x.TotalReferences)
-            .ToList();
+        return Rank(list).ToList();
     }
 
-    // ----------------------------------------
-    // Apply filtering / top selection in one go
-    // ----------------------------------------
     public static IReadOnlyList<MethodPreImpact> ApplyFiltersAndTakeTop(
         IReadOnlyList<MethodPreImpact> ranked,
-        Cli.ImpactReportOptions options)
+        ImpactReportOptions options)
     {
-        IEnumerable<MethodPreImpact> q = ranked;
+        IEnumerable<MethodPreImpact> query = ranked;
 
-        // Default: exclude zero-ref unless explicitly asked
         if (!options.IncludeZero)
-            q = q.Where(x => x.TotalReferences > 0);
+            query = query.Where(x => x.TotalReferences > 0);
 
         if (options.MinRefs > 0)
-            q = q.Where(x => x.TotalReferences >= options.MinRefs);
+            query = query.Where(x => x.TotalReferences >= options.MinRefs);
 
         if (options.MinProjects > 0)
-            q = q.Where(x => x.ProjectsImpacted >= options.MinProjects);
+            query = query.Where(x => x.ProjectsImpacted >= options.MinProjects);
 
-        q = q.OrderByDescending(x => x.RiskScore)
-            .ThenByDescending(x => x.TotalReferences);
+        query = Rank(query);
 
         if (options is { All: false, Top: { } top })
-            q = q.Take(top);
+            query = query.Take(top);
 
-        return q.ToList();
+        return query.ToList();
     }
 
-    // --------------------------
-    // Pass B: Full deep analysis
-    // --------------------------
     public static async Task<MultiImpactResult> AnalyzeManyAsync(
-        Solution solution,
         IEnumerable<IMethodSymbol> methods,
-        Areas.AreaMap areaMap,
-        int maxCallSitesPerProject,
-        Cli.ImpactReportOptions options)
+        ReferenceFinder finder,
+        AreaMap areaMap,
+        CallGraphOptions options,
+        int methodsDetected,
+        CancellationToken cancellationToken = default)
     {
         var list = new List<MethodImpact>();
 
-        foreach (var m in methods)
+        foreach (var method in methods)
         {
-            var r = await ReferenceAnalyzer.AnalyzeAsync(solution, m, areaMap, maxCallSitesPerProject);
-            list.Add(new MethodImpact(r.ChangedMethodDisplay, r));
+            var result = await ReferenceAnalyzer
+                .AnalyzeAsync(method, finder, areaMap, options, cancellationToken)
+                .ConfigureAwait(false);
+
+            list.Add(new MethodImpact(result.ChangedMethodDisplay, result));
         }
 
-        return new MultiImpactResult(list
-            .OrderByDescending(x => x.Result.Projects.Sum(p => p.TotalReferences))
-            .ToList());
+        var ordered = list
+            .OrderByDescending(x => x.Result.TotalReferences)
+            .ThenBy(x => x.MethodDisplay, StringComparer.Ordinal)
+            .ToList();
+
+        var members = ReferenceAnalyzer.MergeMembers(ordered.SelectMany(m => m.Result.Members));
+
+        return new MultiImpactResult(
+            Methods: ordered,
+            Areas: MergeAreas(ordered),
+            Projects: ReferenceAnalyzer.BuildAffectedProjects(members),
+            Members: members,
+            MethodsDetected: methodsDetected,
+            Truncated: ordered.Any(x => x.Result.Truncated));
     }
+
+    public static IReadOnlyList<AreaImpact> MergeAreas(IEnumerable<MethodImpact> methods) =>
+        methods
+            .SelectMany(m => m.Result.Areas)
+            .GroupBy(a => a.Area, StringComparer.Ordinal)
+            .Select(g => new AreaImpact(
+                Area: g.Key,
+                ReferenceCount: g.Sum(a => a.ReferenceCount),
+                ProjectCount: g.Max(a => a.ProjectCount),
+                NearestDepth: g.Min(a => a.NearestDepth)))
+            .OrderBy(a => a.NearestDepth)
+            .ThenByDescending(a => a.ReferenceCount)
+            .ThenBy(a => a.Area, StringComparer.Ordinal)
+            .ToList();
+
+    private static IEnumerable<IMethodSymbol> Distinct(IEnumerable<IMethodSymbol> methods) =>
+        methods
+            .GroupBy(DispatchSet.KeyOf, StringComparer.Ordinal)
+            .Select(g => g.First());
+
+    private static IOrderedEnumerable<MethodPreImpact> Rank(IEnumerable<MethodPreImpact> methods) =>
+        methods
+            .OrderByDescending(x => x.RiskScore)
+            .ThenByDescending(x => x.TotalReferences)
+            .ThenBy(x => x.MethodDisplay, StringComparer.Ordinal);
 }

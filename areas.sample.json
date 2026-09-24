@@ -1,0 +1,30 @@
+{
+  "areas": [
+    {
+      "name": "Command Line",
+      "namespaces": ["ImpactReport.Cli"],
+      "paths": ["**/Cli/**"]
+    },
+    {
+      "name": "Impact Analysis",
+      "namespaces": ["ImpactReport.Analysis"]
+    },
+    {
+      "name": "Area Mapping",
+      "namespaces": ["ImpactReport.Areas"]
+    },
+    {
+      "name": "Git Diffing",
+      "namespaces": ["ImpactReport.Git"]
+    },
+    {
+      "name": "Report Output",
+      "namespaces": ["ImpactReport.Reporting"],
+      "paths": ["**/Reporting/**"]
+    },
+    {
+      "name": "Test Suite",
+      "projects": ["ImpactReport.Tests"]
+    }
+  ]
+}
