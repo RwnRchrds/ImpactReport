@@ -27,8 +27,8 @@ Full report: impact-report.md
 ## What it does
 
 - Finds every call site of one or more methods
-- **Follows callers transitively**, so a repository change still surfaces the UI
-  screens above it
+- **Follows callers transitively**, so a repository change still surfaces the
+  controllers and handlers above it
 - Resolves calls made **through interfaces and base classes**, which is how most
   DI-based code actually calls things
 - Names the **members** that depend on the change, and flags which of them are
@@ -48,8 +48,10 @@ Two modes:
 
 - .NET **8.0 SDK or newer**
 - The solution's required SDKs and targeting packs installed
-- `git` on `PATH` (changed mode only)
-- Access to the solution source; no build required
+- `git` on `PATH` (required for changed mode; used opportunistically otherwise)
+- Access to the solution source. No build is required, but packages must be
+  **restored** — a project whose restore failed will not load, and its call sites
+  are silently absent from the report. Run `dotnet restore` first.
 
 ---
 
@@ -254,19 +256,19 @@ Reference counts are transitive, so a method reached at hop 3 still counts. The
 | `--uncommitted` | Include working-tree edits, not just committed ones (changed mode only) |
 | `--type <type>` | Fully qualified type name (single-method mode) |
 | `--method <name>` | Method name to analyse (single-method mode) |
-| `--areas <file>` | JSON file naming the impact areas of your codebase |
+| `--areas <file>` | JSON file naming the impact areas of your codebase — see [Impact areas](#impact-areas) |
 | `--depth <n>` | Caller hops to follow (default: 3) |
 | `--max-nodes <n>` | Cap on methods visited while walking (default: 2000) |
 | `--top <n>` | Show only the top N methods by risk (default: 25) |
 | `--all` | Show all methods (disables `--top`) |
-| `--min-refs <n>` | Only include methods with at least N references (default: 1) |
+| `--min-refs <n>` | Only include methods with at least N references (default: 1, or 0 with `--include-zero`) |
 | `--min-projects <n>` | Only include methods impacting at least N projects (default: 1) |
 | `--include-zero` | Include methods with 0 references (noisy; for debugging) |
 | `--include-tests` | Include test projects in the analysis |
 | `--out <file>` | Output Markdown file (default: `impact-report.md`) |
 | `--max <n>` | Max sample call sites per project (default: 10) |
 | `--quiet` | Suppress progress output; print the summary only |
-| `--frontend` | Also analyse the frontend (see below) |
+| `--frontend` | Also analyse the frontend — see [Frontend](#frontend) |
 | `--frontend-root <dir>` | Where to scan for frontend sources, relative to the repo root; implies `--frontend` |
 | `--frontend-ext <list>` | Extensions counted as frontend changes (default: `.ts,.html,.scss,.css`) |
 | `-h`, `--help` | Show help and exit |
